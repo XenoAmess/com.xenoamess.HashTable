@@ -2,7 +2,6 @@ package com.xenoamess.test;
 
 import java.io.FileNotFoundException;
 import java.io.PrintWriter;
-import java.util.ArrayList;
 import java.util.Date;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
@@ -10,9 +9,9 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import com.xenoamess.HashTable;
 
 public class HashTableTest {
-	public static final int TEST_TURNS = (1 << 8);
+	public static final int TEST_TURNS = (1 << 14);
 	public static final int TEST_THREADS = 16;
-	public static final int TEST_MAX = 100;
+	public static final int TEST_MAX = TEST_TURNS;
 	public static final String tester = "XenoAmess";
 	public static HashTable<Integer, Integer> testedHashTable;
 
@@ -157,13 +156,13 @@ public class HashTableTest {
 				judger.put(move.key, move.value);
 			} else if (move.method == 1) {
 				Integer res2 = judger.get(move.key);
-				if (res2 != move.res) {
+				if (((res2 == null) != (move.res == null)) || (res2 != null && !res2.equals(move.res))) {
 					printf("at Line %d : suspicious error found : 'get' get wrong answer?\n", i);
 					findBug = true;
 				}
 			} else if (move.method == 2) {
 				Integer res2 = judger.remove(move.key);
-				if (res2 != move.res) {
+				if (((res2 == null) != (move.res == null)) || (res2 != null && !res2.equals(move.res))) {
 					printf("at Line %d : suspicious error found : 'delete' get wrong answer?\n", i);
 					findBug = true;
 				}

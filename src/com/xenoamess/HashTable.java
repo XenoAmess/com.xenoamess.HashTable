@@ -1,13 +1,11 @@
 package com.xenoamess;
 
-import javax.xml.validation.Validator;
-
 public class HashTable<K, V> {
 	static final int HASH_BITS = 0x7fffffff; // usable bits of normal node hash
 
 	int getHashCode(K k) {
 		int hashCode = spread(k.hashCode());
-		return hashCode & nowPoolSize;
+		return hashCode & (nowPoolSize - 1);
 	}
 
 	/**
@@ -92,6 +90,71 @@ public class HashTable<K, V> {
 			--condition;
 		}
 
+		protected V get(K k) {
+			Node nowNode = this.getHead();
+			while (nowNode != null) {
+				if (nowNode.pair.key.equals(k)) {
+					// System.out.println("get " + nowNode.pair.key + " " + k + " " +
+					// nowNode.pair.value);
+					return nowNode.pair.value;
+				}
+				nowNode = nowNode.nextNode;
+			}
+			return null;
+		}
+
+		protected synchronized void insert(K k, V v) {
+			this.workBegin();
+			if (this.head == null) {
+				this.head = new Node(null, new Pair(k, v));
+				this.workEnd();
+				return;
+			}
+			Node nowNode = this.head;
+
+			while (nowNode != null) {
+				if (nowNode.pair.key.equals(k)) {
+					nowNode.pair.value = v;
+					this.workEnd();
+					return;
+				}
+				nowNode = nowNode.nextNode;
+			}
+			this.head = new Node(this.head, new Pair(k, v));
+			this.workEnd();
+			return;
+		}
+
+		protected synchronized V delete(K k) {
+			this.workBegin();
+
+			Node nowNode = this.head;
+			Node oldNode = nowNode;
+
+			if (nowNode == null) {
+				this.workEnd();
+				return null;
+			}
+
+			while (nowNode != null) {
+				if (nowNode.pair.key.equals(k)) {
+					V lastValue = nowNode.pair.value;
+					Node newNode = nowNode.nextNode;
+					while (oldNode != nowNode) {
+						newNode = new Node(newNode, oldNode.pair);
+						oldNode = oldNode.nextNode;
+					}
+					this.head = newNode;
+					this.workEnd();
+					return lastValue;
+				}
+				nowNode = nowNode.nextNode;
+			}
+			this.workEnd();
+			return null;
+
+		}
+
 	}
 
 	public Table[] pool;
@@ -109,7 +172,7 @@ public class HashTable<K, V> {
 		init(initPoolSize);
 	}
 
-	@SuppressWarnings("unchecked")
+	@SuppressWarnings({ "unchecked", "rawtypes" })
 	private void init(int initPoolSize) {
 		if (initPoolSize < 1) {
 			initPoolSize = 1;
@@ -119,7 +182,6 @@ public class HashTable<K, V> {
 		while (this.nowPoolSize < initPoolSize) {
 			this.nowPoolSize = this.nowPoolSize << 1;
 		}
-		--this.nowPoolSize;
 		this.pool = new HashTable.Table[this.nowPoolSize];
 		this.nodeSize = 0;
 		for (int i = 0; i < this.nowPoolSize; i++) {
@@ -131,81 +193,20 @@ public class HashTable<K, V> {
 		int nowHashCode = getHashCode(k);
 
 		Table nowTable = pool[nowHashCode];
-		Node nowNode = nowTable.getHead();
 
-		while (nowNode != null) {
-			if (nowNode.pair.key.equals(k)) {
-				// System.out.println("get " + nowNode.pair.key + " " + k + " " +
-				// nowNode.pair.value);
-				return nowNode.pair.value;
-			}
-			nowNode = nowNode.nextNode;
-		}
-
-		return null;
+		return nowTable.get(k);
 	}
 
 	public void insert(K k, V v) {
 
 		int nowHashCode = getHashCode(k);
-
 		Table nowTable = pool[nowHashCode];
-
-		synchronized (nowTable) {
-			nowTable.workBegin();
-			if (nowTable.head == null) {
-				nowTable.head = new Node(null, new Pair(k, v));
-				nowTable.workEnd();
-				return;
-			}
-			Node nowNode = nowTable.head;
-
-			while (nowNode != null) {
-				if (nowNode.pair.key.equals(k)) {
-					nowNode.pair.value = v;
-					nowTable.workEnd();
-					return;
-				}
-				nowNode = nowNode.nextNode;
-			}
-			nowTable.head = new Node(nowTable.head, new Pair(k, v));
-			nowTable.workEnd();
-			return;
-		}
+		nowTable.insert(k, v);
 	}
 
 	public V delete(K k) {
 		int nowHashCode = getHashCode(k);
-
 		Table nowTable = pool[nowHashCode];
-
-		synchronized (nowTable) {
-			nowTable.workBegin();
-
-			Node nowNode = nowTable.head;
-			Node oldNode = nowNode;
-
-			if (nowNode == null) {
-				nowTable.workEnd();
-				return null;
-			}
-
-			while (nowNode != null) {
-				if (nowNode.pair.key.equals(k)) {
-					V lastValue = nowNode.pair.value;
-					Node newNode = nowNode.nextNode;
-					while (oldNode != nowNode) {
-						newNode = new Node(newNode, oldNode.pair);
-						oldNode = oldNode.nextNode;
-					}
-					pool[nowHashCode].head = newNode;
-					nowTable.workEnd();
-					return lastValue;
-				}
-				nowNode = nowNode.nextNode;
-			}
-			nowTable.workEnd();
-			return null;
-		}
+		return nowTable.delete(k);
 	}
 }
