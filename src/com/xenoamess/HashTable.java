@@ -5,6 +5,11 @@ import javax.xml.validation.Validator;
 public class HashTable<K, V> {
 	static final int HASH_BITS = 0x7fffffff; // usable bits of normal node hash
 
+	int getHashCode(K k) {
+		int hashCode = spread(k.hashCode());
+		return hashCode & nowPoolSize;
+	}
+
 	/**
 	 * Spreads (XORs) higher bits of hash to lower and also forces top bit to 0.
 	 * Because the table uses power-of-two masking, sets of hashes that vary only in
@@ -106,10 +111,15 @@ public class HashTable<K, V> {
 
 	@SuppressWarnings("unchecked")
 	private void init(int initPoolSize) {
+		if (initPoolSize < 1) {
+			initPoolSize = 1;
+		}
+		++initPoolSize;
 		this.nowPoolSize = 1;
 		while (this.nowPoolSize < initPoolSize) {
 			this.nowPoolSize = this.nowPoolSize << 1;
 		}
+		--this.nowPoolSize;
 		this.pool = new HashTable.Table[this.nowPoolSize];
 		this.nodeSize = 0;
 		for (int i = 0; i < this.nowPoolSize; i++) {
@@ -118,8 +128,8 @@ public class HashTable<K, V> {
 	}
 
 	public V get(K k) {
-		int hashCode = spread(k.hashCode());
-		int nowHashCode = hashCode % nowPoolSize;
+		int nowHashCode = getHashCode(k);
+
 		Table nowTable = pool[nowHashCode];
 		Node nowNode = nowTable.getHead();
 
@@ -137,8 +147,7 @@ public class HashTable<K, V> {
 
 	public void insert(K k, V v) {
 
-		int hashCode = spread(k.hashCode());
-		int nowHashCode = hashCode % nowPoolSize;
+		int nowHashCode = getHashCode(k);
 
 		Table nowTable = pool[nowHashCode];
 
@@ -165,9 +174,8 @@ public class HashTable<K, V> {
 		}
 	}
 
-	public boolean delete(K k) {
-		int hashCode = spread(k.hashCode());
-		int nowHashCode = hashCode % nowPoolSize;
+	public V delete(K k) {
+		int nowHashCode = getHashCode(k);
 
 		Table nowTable = pool[nowHashCode];
 
@@ -179,24 +187,25 @@ public class HashTable<K, V> {
 
 			if (nowNode == null) {
 				nowTable.workEnd();
-				return false;
+				return null;
 			}
 
 			while (nowNode != null) {
 				if (nowNode.pair.key.equals(k)) {
-					Node newNode = nowNode;
+					V lastValue = nowNode.pair.value;
+					Node newNode = nowNode.nextNode;
 					while (oldNode != nowNode) {
 						newNode = new Node(newNode, oldNode.pair);
 						oldNode = oldNode.nextNode;
 					}
 					pool[nowHashCode].head = newNode;
 					nowTable.workEnd();
-					return true;
+					return lastValue;
 				}
 				nowNode = nowNode.nextNode;
 			}
 			nowTable.workEnd();
-			return false;
+			return null;
 		}
 	}
 }
