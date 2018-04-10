@@ -14,6 +14,9 @@ public class HashTableTest {
 	}
 
 	static class TestThread implements Runnable {
+		Integer i = 20;
+
+		boolean bo = i.equals("20");
 
 		int index;
 
@@ -38,7 +41,7 @@ public class HashTableTest {
 
 				key = rand();
 				System.out.printf("thread %d , turns %d , before get , arguments:%d\n", this.index, i, key);
-				Integer res2 = testedHashTable.get(rand());
+				Integer res2 = testedHashTable.get(key);
 				System.out.printf("thread %d , turns %d , after get , arguments:%d , res=%d\n", this.index, i, key,
 						res2 == null ? -1 : res2.intValue());
 

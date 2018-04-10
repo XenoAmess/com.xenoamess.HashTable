@@ -49,9 +49,9 @@ public class HashTable<K, V> {
 		protected Node getHead() {
 			while (true) {
 				if (condition != 0) {
-					System.out.println("getHead");
-					System.out.println(head);
-					System.out.println(condition);
+					// System.out.println("getHead");
+					// System.out.println(head);
+					// System.out.println(condition);
 					try {
 						Thread.sleep(50);
 					} catch (InterruptedException e) {
@@ -67,9 +67,9 @@ public class HashTable<K, V> {
 		protected synchronized void workBegin() {
 			while (true) {
 				if (condition != 0) {
-					System.out.println("workBegin");
-					System.out.println(head);
-					System.out.println(condition);
+					// System.out.println("workBegin");
+					// System.out.println(head);
+					// System.out.println(condition);
 					try {
 						Thread.sleep(50);
 					} catch (InterruptedException e) {
@@ -99,14 +99,17 @@ public class HashTable<K, V> {
 		init(128);
 	}
 
-	public HashTable(int nowPoolSize) {
+	public HashTable(int initPoolSize) {
 		super();
-		init(nowPoolSize);
+		init(initPoolSize);
 	}
 
 	@SuppressWarnings("unchecked")
-	private void init(int nowPoolSize) {
-		this.nowPoolSize = nowPoolSize;
+	private void init(int initPoolSize) {
+		this.nowPoolSize = 1;
+		while (this.nowPoolSize < initPoolSize) {
+			this.nowPoolSize = this.nowPoolSize << 1;
+		}
 		this.pool = new HashTable.Table[this.nowPoolSize];
 		this.nodeSize = 0;
 		for (int i = 0; i < this.nowPoolSize; i++) {
@@ -122,6 +125,8 @@ public class HashTable<K, V> {
 
 		while (nowNode != null) {
 			if (nowNode.pair.key.equals(k)) {
+				// System.out.println("get " + nowNode.pair.key + " " + k + " " +
+				// nowNode.pair.value);
 				return nowNode.pair.value;
 			}
 			nowNode = nowNode.nextNode;
