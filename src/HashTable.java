@@ -1,3 +1,5 @@
+import javax.xml.validation.Validator;
+
 public class HashTable<K, V> {
 	static final int HASH_BITS = 0x7fffffff; // usable bits of normal node hash
 
@@ -38,11 +40,48 @@ public class HashTable<K, V> {
 		}
 	}
 
-	// class Table {
-	//
-	// }
+	class Table {
+		protected volatile int condition = 0;
+		protected Node head = null;
 
-	public Node[] pool;
+		protected Node getHead() {
+			while (true) {
+				if (condition != 0) {
+					try {
+						Thread.sleep(50);
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+				} else {
+					return head;
+				}
+			}
+		}
+
+		protected synchronized void workBegin() {
+			while (true) {
+				if (condition != 0) {
+					try {
+						Thread.sleep(50);
+					} catch (InterruptedException e) {
+						// TODO Auto-generated catch block
+						e.printStackTrace();
+					}
+				} else {
+					++condition;
+					return;
+				}
+			}
+		}
+
+		protected synchronized void workEnd() {
+			--condition;
+		}
+
+	}
+
+	public Table[] pool;
 
 	int nowPoolSize;
 	int nodeSize;
@@ -60,17 +99,18 @@ public class HashTable<K, V> {
 	@SuppressWarnings("unchecked")
 	private void init(int nowPoolSize) {
 		this.nowPoolSize = nowPoolSize;
-		this.pool = (HashTable<K, V>.Node[]) new Object[this.nowPoolSize];
+		this.pool = new HashTable.Table[this.nowPoolSize];
 		this.nodeSize = 0;
+		for (int i = 0; i < this.nowPoolSize; i++) {
+			pool[i] = new HashTable.Table();
+		}
 	}
 
 	public V get(K k) {
 		int hashCode = spread(k.hashCode());
 		int nowHashCode = hashCode % nowPoolSize;
-		Node nowNode = pool[nowHashCode];
-		if (nowNode == null) {
-			return null;
-		}
+		Table nowTable = pool[nowHashCode];
+		Node nowNode = nowTable.getHead();
 
 		while (nowNode != null) {
 			if (nowNode.pair.key.equals(k)) {
@@ -83,34 +123,45 @@ public class HashTable<K, V> {
 	}
 
 	public void insert(K k, V v) {
+
 		int hashCode = spread(k.hashCode());
 		int nowHashCode = hashCode % nowPoolSize;
 
-		Node nowNode = pool[nowHashCode];
-		if (nowNode == null) {
-			nowNode = new Node(null, new Pair(k, v));
-			pool[nowHashCode] = nowNode;
+		Table nowTable = pool[nowHashCode];
+		nowTable.workBegin();
+
+		if (nowTable.head == null) {
+			nowTable.head = new Node(null, new Pair(k, v));
+			nowTable.workEnd();
 			return;
 		}
+		Node nowNode = nowTable.head;
 
 		while (nowNode != null) {
 			if (nowNode.pair.key.equals(k)) {
 				nowNode.pair.value = v;
+				nowTable.workEnd();
 				return;
 			}
 			nowNode = nowNode.nextNode;
 		}
-		pool[nowHashCode] = new Node(pool[nowHashCode], new Pair(k, v));
+		pool[nowHashCode].head = new Node(pool[nowHashCode].head, new Pair(k, v));
+		nowTable.workEnd();
+		return;
 	}
 
 	public boolean delete(K k) {
 		int hashCode = spread(k.hashCode());
 		int nowHashCode = hashCode % nowPoolSize;
 
-		Node nowNode = pool[nowHashCode];
+		Table nowTable = pool[nowHashCode];
+		nowTable.workBegin();
+
+		Node nowNode = nowTable.head;
 		Node oldNode = nowNode;
 
 		if (nowNode == null) {
+			nowTable.workEnd();
 			return false;
 		}
 
@@ -121,12 +172,14 @@ public class HashTable<K, V> {
 					newNode = new Node(newNode, oldNode.pair);
 					oldNode = oldNode.nextNode;
 				}
-				pool[nowHashCode] = newNode;
+				pool[nowHashCode].head = newNode;
+				nowTable.workEnd();
 				return true;
 			}
 			nowNode = nowNode.nextNode;
 		}
+		nowTable.workEnd();
 		return false;
 	}
-
 }
+
