@@ -1,3 +1,5 @@
+package com.xenoamess;
+
 import javax.xml.validation.Validator;
 
 public class HashTable<K, V> {
@@ -47,6 +49,9 @@ public class HashTable<K, V> {
 		protected Node getHead() {
 			while (true) {
 				if (condition != 0) {
+					System.out.println("getHead");
+					System.out.println(head);
+					System.out.println(condition);
 					try {
 						Thread.sleep(50);
 					} catch (InterruptedException e) {
@@ -62,6 +67,9 @@ public class HashTable<K, V> {
 		protected synchronized void workBegin() {
 			while (true) {
 				if (condition != 0) {
+					System.out.println("workBegin");
+					System.out.println(head);
+					System.out.println(condition);
 					try {
 						Thread.sleep(50);
 					} catch (InterruptedException e) {
@@ -128,26 +136,28 @@ public class HashTable<K, V> {
 		int nowHashCode = hashCode % nowPoolSize;
 
 		Table nowTable = pool[nowHashCode];
-		nowTable.workBegin();
 
-		if (nowTable.head == null) {
-			nowTable.head = new Node(null, new Pair(k, v));
-			nowTable.workEnd();
-			return;
-		}
-		Node nowNode = nowTable.head;
-
-		while (nowNode != null) {
-			if (nowNode.pair.key.equals(k)) {
-				nowNode.pair.value = v;
+		synchronized (nowTable) {
+			nowTable.workBegin();
+			if (nowTable.head == null) {
+				nowTable.head = new Node(null, new Pair(k, v));
 				nowTable.workEnd();
 				return;
 			}
-			nowNode = nowNode.nextNode;
+			Node nowNode = nowTable.head;
+
+			while (nowNode != null) {
+				if (nowNode.pair.key.equals(k)) {
+					nowNode.pair.value = v;
+					nowTable.workEnd();
+					return;
+				}
+				nowNode = nowNode.nextNode;
+			}
+			nowTable.head = new Node(nowTable.head, new Pair(k, v));
+			nowTable.workEnd();
+			return;
 		}
-		pool[nowHashCode].head = new Node(pool[nowHashCode].head, new Pair(k, v));
-		nowTable.workEnd();
-		return;
 	}
 
 	public boolean delete(K k) {
@@ -155,31 +165,33 @@ public class HashTable<K, V> {
 		int nowHashCode = hashCode % nowPoolSize;
 
 		Table nowTable = pool[nowHashCode];
-		nowTable.workBegin();
 
-		Node nowNode = nowTable.head;
-		Node oldNode = nowNode;
+		synchronized (nowTable) {
+			nowTable.workBegin();
 
-		if (nowNode == null) {
+			Node nowNode = nowTable.head;
+			Node oldNode = nowNode;
+
+			if (nowNode == null) {
+				nowTable.workEnd();
+				return false;
+			}
+
+			while (nowNode != null) {
+				if (nowNode.pair.key.equals(k)) {
+					Node newNode = nowNode;
+					while (oldNode != nowNode) {
+						newNode = new Node(newNode, oldNode.pair);
+						oldNode = oldNode.nextNode;
+					}
+					pool[nowHashCode].head = newNode;
+					nowTable.workEnd();
+					return true;
+				}
+				nowNode = nowNode.nextNode;
+			}
 			nowTable.workEnd();
 			return false;
 		}
-
-		while (nowNode != null) {
-			if (nowNode.pair.key.equals(k)) {
-				Node newNode = nowNode;
-				while (oldNode != nowNode) {
-					newNode = new Node(newNode, oldNode.pair);
-					oldNode = oldNode.nextNode;
-				}
-				pool[nowHashCode].head = newNode;
-				nowTable.workEnd();
-				return true;
-			}
-			nowNode = nowNode.nextNode;
-		}
-		nowTable.workEnd();
-		return false;
 	}
 }
-
