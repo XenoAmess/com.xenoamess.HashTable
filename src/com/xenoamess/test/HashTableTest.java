@@ -1,14 +1,16 @@
 package com.xenoamess.test;
 
+import java.io.BufferedOutputStream;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.PrintStream;
-import java.io.PrintWriter;
 import java.util.Date;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
 import com.xenoamess.HashTable;
 
+@SuppressWarnings("unused")
 public class HashTableTest {
 	public static int TEST_TURNS = (1 << 14);
 	public static int TEST_THREADS = 12;
@@ -22,15 +24,20 @@ public class HashTableTest {
 		return (int) (Math.random() * TEST_MAX);
 	}
 
-	static PrintStream printStream;
+	static PrintStream printStream = null;
 
 	static void init(String fileName) {
+		if (printStream != null) {
+			printStream.flush();
+			printStream.close();
+			printStream = null;
+		}
 		if (fileName == null) {
 			printStream = System.out;
 			return;
 		}
 		try {
-			printStream = new PrintStream(fileName);
+			printStream = new PrintStream(new BufferedOutputStream(new FileOutputStream(fileName)));
 		} catch (FileNotFoundException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -84,7 +91,7 @@ public class HashTableTest {
 				value = rand();
 				printf("thread %d , turns %d , before insert , arguments:%d %d\n", this.index, i, key, value);
 				arr.add(new Move(0, key, value, null));
-				testedHashTable.insert(key, value);
+				testedHashTable.put(key, value);
 				// printf("thread %d , turns %d , after insert , arguments:%d %d\n",
 				// this.index, i, key, value);
 
@@ -184,6 +191,14 @@ public class HashTableTest {
 		println("findSuspiciousError ends");
 	}
 
+	public static void onExit() {
+		if (printStream != null) {
+			printStream.flush();
+			printStream.close();
+			printStream = null;
+		}
+	}
+
 	public static void main(String args[]) {
 		// LOG = false;
 		init("multipleThreadTest.txt");
@@ -191,7 +206,7 @@ public class HashTableTest {
 		printHead();
 		multipleThreadTest();
 		findSuspiciousError();
-		
+
 		init("singleThreadTest.txt");
 		// init(null);
 		printHead();
@@ -201,6 +216,7 @@ public class HashTableTest {
 		TEST_TURNS = 1 << 20;
 		LOG = false;
 		multipleThreadTest();
-		
+
+		onExit();
 	}
 }

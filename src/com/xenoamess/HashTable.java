@@ -1,8 +1,15 @@
 package com.xenoamess;
 
-public class HashTable<K, V> {
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
+@SuppressWarnings("unused")
+public class HashTable<K, V> implements Map<K, V> {
 	static final int HASH_BITS = 0x7fffffff; // usable bits of normal node hash
 	static final int MAX_POOL_SIZE = (1 << 16);
+	static final int MIN_POOL_SIZE = (1 << 8);
 	static final int TRANSFORM_LIMIT = 8;
 
 	int getHashCode(K k) {
@@ -32,21 +39,49 @@ public class HashTable<K, V> {
 		return (h ^ (h >>> 16)) & HASH_BITS;
 	}
 
-	class Pair {
+	// class Pair {
+	// protected final K key;
+	// protected volatile V value;
+	//
+	// Pair(K key, V value) {
+	// this.key = key;
+	// this.value = value;
+	// }
+	// }
+
+	static class HashTableEntry<K, V> implements Entry<K, V> {
 		protected final K key;
 		protected volatile V value;
 
-		Pair(K key, V value) {
+		HashTableEntry(K key, V value) {
 			this.key = key;
 			this.value = value;
 		}
+
+		@Override
+		public K getKey() {
+			return key;
+		}
+
+		@Override
+		public V getValue() {
+			return value;
+		}
+
+		@Override
+		public V setValue(V newValue) {
+			V oldValue = this.value;
+			this.value = newValue;
+			return oldValue;
+		}
+
 	}
 
-	class Node {
-		protected final Node nextNode;
-		protected final Pair pair;
+	static class Node<K, V> {
+		protected final Node<K, V> nextNode;
+		protected final Entry<K, V> pair;
 
-		Node(Node nextNode, Pair pair) {
+		Node(Node<K, V> nextNode, Entry<K, V> pair) {
 			this.nextNode = nextNode;
 			this.pair = pair;
 		}
@@ -55,12 +90,11 @@ public class HashTable<K, V> {
 	class Table {
 
 		protected volatile int condition = 0;
-		protected Node head = null;
+		protected Node<K, V> head = null;
 		protected int tableNodeSize = 0;
 		protected boolean transformed = false;
 
-		
-		protected Node getHead() {
+		protected Node<K, V> getHead() {
 			while (true) {
 				if (condition != 0) {
 					// System.out.println("getHead");
@@ -69,7 +103,6 @@ public class HashTable<K, V> {
 					try {
 						Thread.sleep(50);
 					} catch (InterruptedException e) {
-						// TODO Auto-generated catch block
 						e.printStackTrace();
 					}
 				} else {
@@ -87,7 +120,6 @@ public class HashTable<K, V> {
 					try {
 						Thread.sleep(50);
 					} catch (InterruptedException e) {
-						// TODO Auto-generated catch block
 						e.printStackTrace();
 					}
 				} else {
@@ -102,32 +134,34 @@ public class HashTable<K, V> {
 		}
 
 		protected V get(K k) {
-			Node nowNode = this.getHead();
+			Node<K, V> nowNode = this.getHead();
 			while (nowNode != null) {
-				if (nowNode.pair.key.equals(k)) {
+				if (nowNode.pair.getKey().equals(k)) {
 					// System.out.println("get " + nowNode.pair.key + " " + k + " " +
 					// nowNode.pair.value);
-					return nowNode.pair.value;
+					return nowNode.pair.getValue();
 				}
 				nowNode = nowNode.nextNode;
 			}
 			return null;
 		}
 
-		protected synchronized void insert(K k, V v) {
+		protected synchronized V insert(K k, V v) {
+			V res = null;
 			this.workBegin();
-			Node nowNode = this.head;
+			Node<K, V> nowNode = this.head;
 
 			while (nowNode != null) {
-				if (nowNode.pair.key.equals(k)) {
-					nowNode.pair.value = v;
+				if (nowNode.pair.getKey().equals(k)) {
+					res = nowNode.pair.getValue();
+					nowNode.pair.setValue(v);
 					this.workEnd();
-					return;
+					return res;
 				}
 				nowNode = nowNode.nextNode;
 			}
 
-			this.head = new Node(this.head, new Pair(k, v));
+			this.head = new Node<K, V>(this.head, new HashTableEntry<K, V>(k, v));
 			++nodeSize;
 			++tableNodeSize;
 
@@ -135,14 +169,14 @@ public class HashTable<K, V> {
 				this.transform();
 			}
 			this.workEnd();
-			return;
+			return res;
 		}
 
 		protected synchronized V delete(K k) {
 			this.workBegin();
 
-			Node nowNode = this.head;
-			Node oldNode = nowNode;
+			Node<K, V> nowNode = this.head;
+			Node<K, V> oldNode = nowNode;
 
 			if (nowNode == null) {
 				this.workEnd();
@@ -150,11 +184,11 @@ public class HashTable<K, V> {
 			}
 
 			while (nowNode != null) {
-				if (nowNode.pair.key.equals(k)) {
-					V lastValue = nowNode.pair.value;
-					Node newNode = nowNode.nextNode;
+				if (nowNode.pair.getKey().equals(k)) {
+					V lastValue = nowNode.pair.getValue();
+					Node<K, V> newNode = nowNode.nextNode;
 					while (oldNode != nowNode) {
-						newNode = new Node(newNode, oldNode.pair);
+						newNode = new Node<K, V>(newNode, oldNode.pair);
 						oldNode = oldNode.nextNode;
 					}
 					this.head = newNode;
@@ -174,13 +208,13 @@ public class HashTable<K, V> {
 			Table bigger = new Table();
 			Table smaller = new Table();
 			this.workBegin();
-			Node nowNode = this.head;
+			Node<K, V> nowNode = this.head;
 			while (nowNode != null) {
-				if (getNewHashCode(nowNode.pair.key) == nowHashcode) {
-					smaller.head = new Node(smaller.head, nowNode.pair);
+				if (getNewHashCode(nowNode.pair.getKey()) == nowHashcode) {
+					smaller.head = new Node<K, V>(smaller.head, nowNode.pair);
 					++smaller.tableNodeSize;
 				} else {
-					bigger.head = new Node(bigger.head, nowNode.pair);
+					bigger.head = new Node<K, V>(bigger.head, nowNode.pair);
 					++bigger.tableNodeSize;
 				}
 				nowNode = nowNode.nextNode;
@@ -209,7 +243,7 @@ public class HashTable<K, V> {
 
 	public HashTable() {
 		super();
-		init(128);
+		init(MIN_POOL_SIZE);
 	}
 
 	public HashTable(int initPoolSize) {
@@ -219,8 +253,8 @@ public class HashTable<K, V> {
 
 	@SuppressWarnings({ "unchecked", "rawtypes" })
 	private void init(int initPoolSize) {
-		if (initPoolSize < 1) {
-			initPoolSize = 1;
+		if (initPoolSize < MIN_POOL_SIZE) {
+			initPoolSize = MIN_POOL_SIZE;
 		} else if (initPoolSize > MAX_POOL_SIZE) {
 			initPoolSize = MAX_POOL_SIZE;
 		}
@@ -237,29 +271,24 @@ public class HashTable<K, V> {
 		}
 	}
 
-	public V get(K k) {
+	@SuppressWarnings("unchecked")
+	@Override
+	public V get(Object o) {
+		if (o == null) {
+			return null;
+		}
+		K k = null;
+		try {
+			k = (K) (o);
+		} catch (java.lang.ClassCastException e) {
+			return null;
+		}
+
 		int nowHashCode = getHashCode(k);
 
 		Table nowTable = pool[nowHashCode];
 
 		return nowTable.get(k);
-	}
-
-	public void insert(K k, V v) {
-		while (condition != 0) {
-			try {
-				Thread.sleep(50);
-			} catch (InterruptedException e) {
-				e.printStackTrace();
-			}
-		}
-
-		int nowHashCode = getHashCode(k);
-		Table nowTable = pool[nowHashCode];
-		nowTable.insert(k, v);
-		if (nodeSize >= nowPoolSize - (nowPoolSize >> 2)) {
-			resize();
-		}
 	}
 
 	public V delete(K k) {
@@ -286,14 +315,119 @@ public class HashTable<K, V> {
 
 		condition = 1;
 		int newPoolSize = (nowPoolSize << 1);
+		Table[] oldPool = pool;
+		@SuppressWarnings("unchecked")
 		Table[] newPool = new HashTable.Table[newPoolSize];
+
 		for (int i = 0; i < nowPoolSize; i++) {
-			pool[i].resizeSplit(i, newPool, newPoolSize);
+			oldPool[i].resizeSplit(i, newPool, newPoolSize);
 		}
 		pool = newPool;
 		nowPoolSize = newPoolSize;
 		condition = 0;
 
+	}
+
+	@Override
+	public synchronized void clear() {
+		init(MIN_POOL_SIZE);
+	}
+
+	@Override
+	public boolean containsKey(Object o) {
+		if (this.get(o) == null) {
+			return false;
+		}
+		return true;
+	}
+
+	@Override
+	public boolean containsValue(Object arg0) {
+		// TODO Auto-generated method stub
+		throw new RuntimeException("workNotFinish exception");
+		// return false;
+	}
+
+	@Override
+	public Set<Entry<K, V>> entrySet() {
+		Set<Entry<K, V>> entrySet = new HashSet<Entry<K, V>>();
+
+		Table[] oldPool = pool;
+		for (int i = 0; i < nowPoolSize; i++) {
+			oldPool[i].getHead();
+
+		}
+
+		return entrySet;
+	}
+
+	@Override
+	public boolean isEmpty() {
+		return (nodeSize > 0);
+	}
+
+	@Override
+	public Set<K> keySet() {
+		// TODO Auto-generated method stub
+		throw new RuntimeException("workNotFinish exception");
+		// return null;
+	}
+
+	@Override
+	public V put(K k, V v) {
+		while (condition != 0) {
+			try {
+				Thread.sleep(50);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+		}
+
+		int nowHashCode = getHashCode(k);
+		Table nowTable = pool[nowHashCode];
+		V res = nowTable.insert(k, v);
+		if (nodeSize >= nowPoolSize - (nowPoolSize >> 2)) {
+			resize();
+		}
+		return res;
+	}
+
+	@Override
+	public void putAll(Map<? extends K, ? extends V> map) {
+		for (Entry<? extends K, ? extends V> entry : map.entrySet()) {
+			this.put(entry.getKey(), entry.getValue());
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	@Override
+	public V remove(Object o) {
+		if (o == null) {
+			return null;
+		}
+		K k = null;
+		try {
+			k = (K) (o);
+		} catch (java.lang.ClassCastException e) {
+			return null;
+		}
+
+		if (!containsKey(o)) {
+			return null;
+		}
+		return delete(k);
+	}
+
+	@Override
+	public int size() {
+		return nodeSize;
+	}
+
+	@Override
+	public Collection<V> values() {
+		// TODO Auto-generated method stub
+		throw new RuntimeException("workNotFinish exception");
+		// return null;
 	}
 
 }
