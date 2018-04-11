@@ -4,8 +4,8 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
-@SuppressWarnings("unused")
 public class HashTable<K, V> implements Map<K, V> {
 	static final int HASH_BITS = 0x7fffffff; // usable bits of normal node hash
 	static final int MAX_POOL_SIZE = (1 << 16);
@@ -69,7 +69,7 @@ public class HashTable<K, V> implements Map<K, V> {
 		}
 
 		@Override
-		public V setValue(V newValue) {
+		public synchronized V setValue(V newValue) {
 			V oldValue = this.value;
 			this.value = newValue;
 			return oldValue;
@@ -89,23 +89,14 @@ public class HashTable<K, V> implements Map<K, V> {
 
 	class Table {
 
-		protected volatile int condition = 0;
+		protected volatile AtomicInteger condition = new AtomicInteger();
 		protected Node<K, V> head = null;
-		protected int tableNodeSize = 0;
+		protected AtomicInteger tableNodeSize = new AtomicInteger();
 		protected boolean transformed = false;
 
 		protected Node<K, V> getHead() {
 			while (true) {
-				if (condition != 0) {
-					// System.out.println("getHead");
-					// System.out.println(head);
-					// System.out.println(condition);
-					try {
-						Thread.sleep(50);
-					} catch (InterruptedException e) {
-						e.printStackTrace();
-					}
-				} else {
+				if (condition.get() == 0) {
 					return head;
 				}
 			}
@@ -113,24 +104,14 @@ public class HashTable<K, V> implements Map<K, V> {
 
 		protected synchronized void workBegin() {
 			while (true) {
-				if (condition != 0) {
-					// System.out.println("workBegin");
-					// System.out.println(head);
-					// System.out.println(condition);
-					try {
-						Thread.sleep(50);
-					} catch (InterruptedException e) {
-						e.printStackTrace();
-					}
-				} else {
-					++condition;
+				if (condition.compareAndSet(0, 1)) {
 					return;
 				}
 			}
 		}
 
 		protected synchronized void workEnd() {
-			--condition;
+			condition.set(0);
 		}
 
 		protected V get(K k) {
@@ -162,10 +143,10 @@ public class HashTable<K, V> implements Map<K, V> {
 			}
 
 			this.head = new Node<K, V>(this.head, new HashTableEntry<K, V>(k, v));
-			++nodeSize;
-			++tableNodeSize;
+			nodeSize.getAndAdd(1);
+			tableNodeSize.getAndAdd(1);
 
-			if (tableNodeSize > TRANSFORM_LIMIT) {
+			if (tableNodeSize.get() > TRANSFORM_LIMIT) {
 				this.transform();
 			}
 			this.workEnd();
@@ -192,8 +173,8 @@ public class HashTable<K, V> implements Map<K, V> {
 						oldNode = oldNode.nextNode;
 					}
 					this.head = newNode;
-					--nodeSize;
-					--tableNodeSize;
+					nodeSize.addAndGet(-1);
+					tableNodeSize.getAndAdd(-1);
 					this.workEnd();
 					return lastValue;
 				}
@@ -212,10 +193,10 @@ public class HashTable<K, V> implements Map<K, V> {
 			while (nowNode != null) {
 				if (getNewHashCode(nowNode.pair.getKey()) == nowHashcode) {
 					smaller.head = new Node<K, V>(smaller.head, nowNode.pair);
-					++smaller.tableNodeSize;
+					smaller.tableNodeSize.getAndAdd(1);
 				} else {
 					bigger.head = new Node<K, V>(bigger.head, nowNode.pair);
-					++bigger.tableNodeSize;
+					bigger.tableNodeSize.getAndAdd(1);
 				}
 				nowNode = nowNode.nextNode;
 			}
@@ -233,9 +214,9 @@ public class HashTable<K, V> implements Map<K, V> {
 
 	public Table[] pool;
 
-	int nowPoolSize;
-	int nodeSize;
-	volatile int condition = 0;
+	volatile int nowPoolSize = 0;
+	AtomicInteger nodeSize = new AtomicInteger();
+	AtomicInteger condition = new AtomicInteger();
 
 	public int getNowPoolSize() {
 		return nowPoolSize;
@@ -265,7 +246,7 @@ public class HashTable<K, V> implements Map<K, V> {
 			this.nowPoolSize = this.nowPoolSize << 1;
 		}
 		this.pool = new HashTable.Table[this.nowPoolSize];
-		this.nodeSize = 0;
+		this.nodeSize.set(0);
 		for (int i = 0; i < this.nowPoolSize; i++) {
 			pool[i] = new HashTable.Table();
 		}
@@ -291,13 +272,8 @@ public class HashTable<K, V> implements Map<K, V> {
 		return nowTable.get(k);
 	}
 
-	public V delete(K k) {
-		while (condition != 0) {
-			try {
-				Thread.sleep(50);
-			} catch (InterruptedException e) {
-				e.printStackTrace();
-			}
+	protected V delete(K k) {
+		while (condition.get() != 0) {
 		}
 
 		int nowHashCode = getHashCode(k);
@@ -309,11 +285,15 @@ public class HashTable<K, V> implements Map<K, V> {
 		if (nowPoolSize >= MAX_POOL_SIZE) {
 			return;
 		}
-		if (condition == 1) {
+		if (condition.get() == 1) {
 			return;
 		}
 
-		condition = 1;
+		if (!(nodeSize.get() >= nowPoolSize - (nowPoolSize >> 2))) {
+			return;
+		}
+
+		condition.set(1);
 		int newPoolSize = (nowPoolSize << 1);
 		Table[] oldPool = pool;
 		@SuppressWarnings("unchecked")
@@ -324,8 +304,7 @@ public class HashTable<K, V> implements Map<K, V> {
 		}
 		pool = newPool;
 		nowPoolSize = newPoolSize;
-		condition = 0;
-
+		condition.set(0);
 	}
 
 	@Override
@@ -350,12 +329,16 @@ public class HashTable<K, V> implements Map<K, V> {
 
 	@Override
 	public Set<Entry<K, V>> entrySet() {
-		Set<Entry<K, V>> entrySet = new HashSet<Entry<K, V>>();
+		HashSet<Entry<K, V>> entrySet = new HashSet<Entry<K, V>>();
 
 		Table[] oldPool = pool;
 		for (int i = 0; i < nowPoolSize; i++) {
-			oldPool[i].getHead();
+			Node<K, V> nowNode = oldPool[i].getHead();
 
+			while (nowNode != null) {
+				entrySet.add(nowNode.pair);
+				nowNode = nowNode.nextNode;
+			}
 		}
 
 		return entrySet;
@@ -363,7 +346,7 @@ public class HashTable<K, V> implements Map<K, V> {
 
 	@Override
 	public boolean isEmpty() {
-		return (nodeSize > 0);
+		return (nodeSize.get() > 0);
 	}
 
 	@Override
@@ -375,18 +358,13 @@ public class HashTable<K, V> implements Map<K, V> {
 
 	@Override
 	public V put(K k, V v) {
-		while (condition != 0) {
-			try {
-				Thread.sleep(50);
-			} catch (InterruptedException e) {
-				e.printStackTrace();
-			}
+		while (condition.get() != 0) {
 		}
 
 		int nowHashCode = getHashCode(k);
 		Table nowTable = pool[nowHashCode];
 		V res = nowTable.insert(k, v);
-		if (nodeSize >= nowPoolSize - (nowPoolSize >> 2)) {
+		if (nodeSize.get() >= nowPoolSize - (nowPoolSize >> 2)) {
 			resize();
 		}
 		return res;
@@ -420,7 +398,7 @@ public class HashTable<K, V> implements Map<K, V> {
 
 	@Override
 	public int size() {
-		return nodeSize;
+		return nodeSize.get();
 	}
 
 	@Override

@@ -10,7 +10,6 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 
 import com.xenoamess.HashTable;
 
-@SuppressWarnings("unused")
 public class HashTableTest {
 	public static int TEST_TURNS = (1 << 14);
 	public static int TEST_THREADS = 12;
@@ -106,7 +105,7 @@ public class HashTableTest {
 				key = rand();
 				// printf("thread %d , turns %d , before delete , arguments:%d\n",
 				// this.index, i, key);
-				Integer res3 = testedHashTable.delete(key);
+				Integer res3 = testedHashTable.remove(key);
 				printf("thread %d , turns %d , after delete , arguments:%d , res=%d\n", this.index, i, key,
 						res3 == null ? -1 : res3.intValue());
 				arr.add(new Move(2, key, value, res3));
