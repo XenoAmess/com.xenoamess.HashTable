@@ -2,10 +2,16 @@ package com.xenoamess;
 
 public class HashTable<K, V> {
 	static final int HASH_BITS = 0x7fffffff; // usable bits of normal node hash
+	static final int MAX_POOL_SIZE = (1 << 16);
 
 	int getHashCode(K k) {
 		int hashCode = spread(k.hashCode());
 		return hashCode & (nowPoolSize - 1);
+	}
+
+	int getNewHashCode(K k) {
+		int hashCode = spread(k.hashCode());
+		return hashCode & ((nowPoolSize << 1) - 1);
 	}
 
 	/**
@@ -105,11 +111,6 @@ public class HashTable<K, V> {
 
 		protected synchronized void insert(K k, V v) {
 			this.workBegin();
-			if (this.head == null) {
-				this.head = new Node(null, new Pair(k, v));
-				this.workEnd();
-				return;
-			}
 			Node nowNode = this.head;
 
 			while (nowNode != null) {
@@ -120,7 +121,9 @@ public class HashTable<K, V> {
 				}
 				nowNode = nowNode.nextNode;
 			}
+
 			this.head = new Node(this.head, new Pair(k, v));
+			++nodeSize;
 			this.workEnd();
 			return;
 		}
@@ -145,6 +148,7 @@ public class HashTable<K, V> {
 						oldNode = oldNode.nextNode;
 					}
 					this.head = newNode;
+					--nodeSize;
 					this.workEnd();
 					return lastValue;
 				}
@@ -155,12 +159,36 @@ public class HashTable<K, V> {
 
 		}
 
+		protected synchronized void resizeSplit(int nowHashcode, HashTable<K, V>.Table[] newPool, int newPoolSize) {
+			Table bigger = new Table();
+			Table smaller = new Table();
+			this.workBegin();
+			Node nowNode = this.head;
+			while (nowNode != null) {
+				if (getNewHashCode(nowNode.pair.key) == nowHashcode) {
+					smaller.head = new Node(smaller.head, nowNode.pair);
+				} else {
+					bigger.head = new Node(bigger.head, nowNode.pair);
+				}
+				nowNode = nowNode.nextNode;
+			}
+			newPool[nowHashcode] = smaller;
+			newPool[nowHashcode + (newPoolSize >> 1)] = bigger;
+			this.workEnd();
+			return;
+		}
+
 	}
 
 	public Table[] pool;
 
 	int nowPoolSize;
 	int nodeSize;
+	volatile int condition = 0;
+
+	public int getNowPoolSize() {
+		return nowPoolSize;
+	}
 
 	public HashTable() {
 		super();
@@ -176,7 +204,10 @@ public class HashTable<K, V> {
 	private void init(int initPoolSize) {
 		if (initPoolSize < 1) {
 			initPoolSize = 1;
+		} else if (initPoolSize > MAX_POOL_SIZE) {
+			initPoolSize = MAX_POOL_SIZE;
 		}
+
 		++initPoolSize;
 		this.nowPoolSize = 1;
 		while (this.nowPoolSize < initPoolSize) {
@@ -198,15 +229,54 @@ public class HashTable<K, V> {
 	}
 
 	public void insert(K k, V v) {
+		while (condition != 0) {
+			try {
+				Thread.sleep(50);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+		}
 
 		int nowHashCode = getHashCode(k);
 		Table nowTable = pool[nowHashCode];
 		nowTable.insert(k, v);
+		if (nodeSize >= nowPoolSize - (nowPoolSize >> 2)) {
+			resize();
+		}
 	}
 
 	public V delete(K k) {
+		while (condition != 0) {
+			try {
+				Thread.sleep(50);
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			}
+		}
+
 		int nowHashCode = getHashCode(k);
 		Table nowTable = pool[nowHashCode];
 		return nowTable.delete(k);
 	}
+
+	public synchronized void resize() {
+		if (nowPoolSize >= MAX_POOL_SIZE) {
+			return;
+		}
+		if (condition == 1) {
+			return;
+		}
+
+		condition = 1;
+		int newPoolSize = (nowPoolSize << 1);
+		Table[] newPool = new HashTable.Table[newPoolSize];
+		for (int i = 0; i < nowPoolSize; i++) {
+			pool[i].resizeSplit(i, newPool, newPoolSize);
+		}
+		pool = newPool;
+		nowPoolSize = newPoolSize;
+		condition = 0;
+
+	}
+
 }

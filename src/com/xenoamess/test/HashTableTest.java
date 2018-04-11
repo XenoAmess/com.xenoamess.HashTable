@@ -1,6 +1,7 @@
 package com.xenoamess.test;
 
 import java.io.FileNotFoundException;
+import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.util.Date;
 import java.util.concurrent.ConcurrentHashMap;
@@ -9,21 +10,27 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import com.xenoamess.HashTable;
 
 public class HashTableTest {
-	public static final int TEST_TURNS = (1 << 14);
-	public static final int TEST_THREADS = 16;
-	public static final int TEST_MAX = TEST_TURNS;
+	public static int TEST_TURNS = (1 << 14);
+	public static int TEST_THREADS = 12;
+	public static int TEST_MAX = TEST_TURNS;
 	public static final String tester = "XenoAmess";
 	public static HashTable<Integer, Integer> testedHashTable;
+
+	public static boolean LOG = true;
 
 	public static Integer rand() {
 		return (int) (Math.random() * TEST_MAX);
 	}
 
-	static PrintWriter printWriter;
+	static PrintStream printStream;
 
 	static void init(String fileName) {
+		if (fileName == null) {
+			printStream = System.out;
+			return;
+		}
 		try {
-			printWriter = new PrintWriter(fileName);
+			printStream = new PrintStream(fileName);
 		} catch (FileNotFoundException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -31,11 +38,13 @@ public class HashTableTest {
 	}
 
 	static void println(Object object) {
-		printWriter.println(object);
+		if (LOG)
+			printStream.println(object);
 	}
 
 	static void printf(String format, Object... args) {
-		printWriter.printf(format, args);
+		if (LOG)
+			printStream.printf(format, args);
 	}
 
 	static volatile int CNT;
@@ -116,7 +125,7 @@ public class HashTableTest {
 	static void multipleThreadTest() {
 		arr = new ConcurrentLinkedDeque<Move>();
 		CNT = TEST_THREADS;
-		testedHashTable = new HashTable<Integer, Integer>(1 << 8);
+		testedHashTable = new HashTable<Integer, Integer>(64);
 		for (int i = 0; i < TEST_THREADS; i++) {
 			new Thread(new TestThread(i)).start();
 		}
@@ -133,7 +142,7 @@ public class HashTableTest {
 	static void singleThreadTest() {
 		arr = new ConcurrentLinkedDeque<Move>();
 		CNT = 1;
-		testedHashTable = new HashTable<Integer, Integer>(1 << 8);
+		testedHashTable = new HashTable<Integer, Integer>(64);
 		new Thread(new TestThread(0)).start();
 
 		while (CNT != 0) {
@@ -147,6 +156,7 @@ public class HashTableTest {
 	}
 
 	static void findSuspiciousError() {
+		println("nowPoolSize : " + testedHashTable.getNowPoolSize());
 		ConcurrentHashMap<Integer, Integer> judger = new ConcurrentHashMap<Integer, Integer>();
 		int i = 4;
 		boolean findBug = false;
@@ -175,15 +185,22 @@ public class HashTableTest {
 	}
 
 	public static void main(String args[]) {
+		// LOG = false;
 		init("multipleThreadTest.txt");
+		// init(null);
 		printHead();
 		multipleThreadTest();
 		findSuspiciousError();
-		printWriter.close();
+		
 		init("singleThreadTest.txt");
+		// init(null);
 		printHead();
 		singleThreadTest();
 		findSuspiciousError();
-		printWriter.close();
+
+		TEST_TURNS = 1 << 20;
+		LOG = false;
+		multipleThreadTest();
+		
 	}
 }
