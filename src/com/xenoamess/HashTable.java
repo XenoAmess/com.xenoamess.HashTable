@@ -1,5 +1,6 @@
 package com.xenoamess;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Map;
@@ -321,10 +322,28 @@ public class HashTable<K, V> implements Map<K, V> {
 	}
 
 	@Override
-	public boolean containsValue(Object arg0) {
-		// TODO Auto-generated method stub
-		throw new RuntimeException("workNotFinish exception");
-		// return false;
+	public boolean containsValue(Object o) {
+		if (o == null) {
+			return false;
+		}
+		V v = null;
+		try {
+			v = (V) (o);
+		} catch (java.lang.ClassCastException e) {
+			return false;
+		}
+
+		Table[] oldPool = pool;
+		for (int i = 0; i < nowPoolSize; i++) {
+			Node<K, V> nowNode = oldPool[i].getHead();
+
+			while (nowNode != null) {
+				if (nowNode.pair.getValue().equals(v))
+					return true;
+				nowNode = nowNode.nextNode;
+			}
+		}
+		return false;
 	}
 
 	@Override
@@ -351,9 +370,19 @@ public class HashTable<K, V> implements Map<K, V> {
 
 	@Override
 	public Set<K> keySet() {
-		// TODO Auto-generated method stub
-		throw new RuntimeException("workNotFinish exception");
-		// return null;
+		HashSet<K> keySet = new HashSet<K>();
+
+		Table[] oldPool = pool;
+		for (int i = 0; i < nowPoolSize; i++) {
+			Node<K, V> nowNode = oldPool[i].getHead();
+
+			while (nowNode != null) {
+				keySet.add(nowNode.pair.getKey());
+				nowNode = nowNode.nextNode;
+			}
+		}
+
+		return keySet;
 	}
 
 	@Override
@@ -403,9 +432,19 @@ public class HashTable<K, V> implements Map<K, V> {
 
 	@Override
 	public Collection<V> values() {
-		// TODO Auto-generated method stub
-		throw new RuntimeException("workNotFinish exception");
-		// return null;
+		ArrayList<V> values = new ArrayList<V>();
+
+		Table[] oldPool = pool;
+		for (int i = 0; i < nowPoolSize; i++) {
+			Node<K, V> nowNode = oldPool[i].getHead();
+
+			while (nowNode != null) {
+				values.add(nowNode.pair.getValue());
+				nowNode = nowNode.nextNode;
+			}
+		}
+
+		return values;
 	}
 
 }
