@@ -200,11 +200,6 @@ public class HashTableTest {
 
 	public static void main(String args[]) {
 		// LOG = false;
-		init("multipleThreadTest.txt");
-		// init(null);
-		printHead();
-		multipleThreadTest();
-		findSuspiciousError();
 
 		init("singleThreadTest.txt");
 		// init(null);
@@ -212,10 +207,15 @@ public class HashTableTest {
 		singleThreadTest();
 		findSuspiciousError();
 
+		init("multipleThreadTest.txt");
+		// init(null);
+		printHead();
+		multipleThreadTest();
+		findSuspiciousError();
+
 		TEST_TURNS = 1 << 20;
 		LOG = false;
 		multipleThreadTest();
-
 		onExit();
 	}
 }

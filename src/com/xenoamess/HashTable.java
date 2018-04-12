@@ -2,25 +2,27 @@ package com.xenoamess;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Map.Entry;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import javax.swing.tree.TreeNode;
 
 public class HashTable<K, V> implements Map<K, V> {
 	static final int HASH_BITS = 0x7fffffff; // usable bits of normal node hash
 	static final int MAX_POOL_SIZE = (1 << 16);
 	static final int MIN_POOL_SIZE = (1 << 8);
-	static final int TRANSFORM_LIMIT = 8;
+	static final int TRANSFORM_LIMIT = 1 << 30;
 
-	int getHashCode(K k) {
+	int getHashCode(Object k) {
 		int hashCode = spread(k.hashCode());
 		return hashCode & (nowPoolSize - 1);
-	}
-
-	int getNewHashCode(K k) {
-		int hashCode = spread(k.hashCode());
-		return hashCode & ((nowPoolSize << 1) - 1);
 	}
 
 	/**
@@ -40,17 +42,7 @@ public class HashTable<K, V> implements Map<K, V> {
 		return (h ^ (h >>> 16)) & HASH_BITS;
 	}
 
-	// class Pair {
-	// protected final K key;
-	// protected volatile V value;
-	//
-	// Pair(K key, V value) {
-	// this.key = key;
-	// this.value = value;
-	// }
-	// }
-
-	static class HashTableEntry<K, V> implements Entry<K, V> {
+	static class HashTableEntry<K, V> implements Entry<K, V>, Comparable<HashTableEntry<K, V>> {
 		protected final K key;
 		protected volatile V value;
 
@@ -76,6 +68,12 @@ public class HashTable<K, V> implements Map<K, V> {
 			return oldValue;
 		}
 
+		@SuppressWarnings({ "unchecked", "rawtypes" })
+		@Override
+		public int compareTo(HashTableEntry<K, V> a) {
+			return ((Comparable) (this.getKey())).compareTo((Comparable) (a.getKey()));
+		}
+
 	}
 
 	static class Node<K, V> {
@@ -88,12 +86,241 @@ public class HashTable<K, V> implements Map<K, V> {
 		}
 	}
 
-	class Table {
+	static class Table<K, V> {
+
+		static class SkipedListNode<K, V> extends Node<K, V> {
+			// protected final int distance;
+			protected final SkipedListNode<K, V> downNode;
+
+			SkipedListNode(SkipedListNode<K, V> nextNode, SkipedListNode<K, V> downNode, Entry<K, V> pair) {
+				super(nextNode, pair);
+				this.downNode = downNode;
+				// this.distance = distance;
+			}
+		}
+
+		@SuppressWarnings("hiding")
+		class SkipedListMap<K, V> implements Map<K, V> {
+
+			AtomicInteger layer = new AtomicInteger(0);
+
+			SkipedListNode<K, V> heads[];
+
+			protected SkipedListNode<K, V>[] getHeads() {
+				while (true) {
+					if (condition.get() == 0) {
+						return heads;
+					}
+				}
+			}
+
+			SkipedListMap() {
+				init();
+			}
+
+			@SuppressWarnings("unchecked")
+			void init() {
+				while ((1 << layer.get()) <= tableNodeSize.get()) {
+					layer.getAndAdd(1);
+				}
+
+				heads = new SkipedListNode[layer.get()];
+
+				ArrayList<Entry<K, V>> pairs = new ArrayList<Entry<K, V>>();
+				Node<K, V> nowNode = (Node<K, V>) head;
+				while (nowNode != null) {
+					pairs.add(nowNode.pair);
+					nowNode = nowNode.nextNode;
+				}
+				pairs.sort(null);
+
+				SkipedListNode<K, V>[] lastHeads = new SkipedListNode[pairs.size()];
+
+				for (int i = 0; i < layer.get(); i++) {
+					heads[i] = null;
+					for (int j = (pairs.size() - 1) >> i; j >= 0; j--) {
+						heads[i] = new SkipedListNode<K, V>(heads[i], lastHeads[j << i], pairs.get(j << i));
+						lastHeads[j << i] = heads[i];
+					}
+				}
+
+				pairs.clear();
+			}
+
+			@Override
+			public synchronized void clear() {
+				layer.set(0);
+				heads = null;
+			}
+
+			@SuppressWarnings("unchecked")
+			@Override
+			public V get(Object o) {
+				K k = (K) o;
+				SkipedListNode<K, V>[] nowHeads = getHeads();
+				SkipedListNode<K, V> nowNode = nowHeads[layer.get() - 1];
+				SkipedListNode<K, V> nextNode = null;
+				int cmpNow = ((Comparable<K>) nowNode.pair.getKey()).compareTo(k);
+				if (cmpNow == 0) {
+					return nowNode.pair.getValue();
+				}
+
+				while (nowNode != null) {
+					nextNode = (SkipedListNode<K, V>) nowNode.nextNode;
+
+					int cmpNext;
+					if (nextNode == null) {
+						cmpNext = 1;
+					} else {
+						cmpNext = ((Comparable<K>) nextNode.pair.getKey()).compareTo(k);
+					}
+
+					if (cmpNext == 0) {
+						return nextNode.pair.getValue();
+					} else if (cmpNext < 0) {
+						nowNode = (SkipedListNode<K, V>) nowNode.nextNode;
+					} else {
+						nowNode = nowNode.downNode;
+					}
+				}
+
+				return null;
+			}
+
+			@SuppressWarnings("unchecked")
+			@Override
+			public V put(K k, V v) {
+				V res = null;
+
+				SkipedListNode<K, V> nowNode = heads[layer.get() - 1];
+				SkipedListNode<K, V> nextNode = null;
+				ArrayList<Entry<K, V>> pairs = new ArrayList<Entry<K, V>>();
+
+				int newLayer = layer.get();
+				while ((1 << newLayer) <= tableNodeSize.get()) {
+					++newLayer;
+				}
+				SkipedListNode<K, V>[] newHeads = new SkipedListNode[newLayer];
+				// SkipedListNode<K, V>[] oldBack = new SkipedListNode[newLayer];
+
+				int nowLayer = newLayer - 1;
+
+				int cmpNow = ((Comparable<K>) nowNode.pair.getKey()).compareTo(k);
+				if (cmpNow == 0) {
+					res = nowNode.pair.getValue();
+					nowNode.pair.setValue(v);
+					return res;
+				}
+
+				while (nowNode != null) {
+					nextNode = (SkipedListNode<K, V>) nowNode.nextNode;
+
+					int cmpNext;
+					if (nextNode == null) {
+						cmpNext = 1;
+					} else {
+						cmpNext = ((Comparable<K>) nextNode.pair.getKey()).compareTo(k);
+					}
+
+					if (cmpNext == 0) {
+						res = nextNode.pair.getValue();
+						nextNode.pair.setValue(v);
+						return res;
+					} else if (cmpNext < 0) {
+						if (!pairs.isEmpty() && pairs.get(pairs.size() - 1) != nowNode.pair)
+							pairs.add(nowNode.pair);
+						nowNode = (SkipedListNode<K, V>) nowNode.nextNode;
+					} else {
+						if (nowNode.downNode == null) {
+							pairs.add(new HashTableEntry<K, V>(k, v));
+							SkipedListNode<K, V>[] lastHeads = new SkipedListNode[newLayer];
+
+							for (int i = 0; i < newLayer; i++) {
+								newHeads[i] = null;
+								for (int j = (pairs.size() - 1) >> i; j >= 0; j--) {
+									newHeads[i] = new SkipedListNode<K, V>(newHeads[i], lastHeads[j << i],
+											pairs.get(j << i));
+									lastHeads[j << i] = newHeads[i];
+								}
+							}
+							pairs.clear();
+							heads = newHeads;
+							layer.set(newLayer);
+							return null;
+						} else {
+							newHeads[nowLayer] = (SkipedListNode<K, V>) nowNode.nextNode;
+						}
+						nowNode = nowNode.downNode;
+						nowLayer--;
+					}
+				}
+
+				res = null;
+				return res;
+			}
+
+			@SuppressWarnings("unchecked")
+			@Override
+			public V remove(Object o) {
+				K k = (K) o;
+				return this.put(k, null);
+			}
+
+			@Override
+			public boolean containsKey(Object arg0) {
+				// TODO Auto-generated method stub
+				return false;
+			}
+
+			@Override
+			public boolean containsValue(Object arg0) {
+				// TODO Auto-generated method stub
+				return false;
+			}
+
+			@Override
+			public Set<Entry<K, V>> entrySet() {
+				// TODO Auto-generated method stub
+				return null;
+			}
+
+			@Override
+			public boolean isEmpty() {
+				// TODO Auto-generated method stub
+				return false;
+			}
+
+			@Override
+			public Set<K> keySet() {
+				// TODO Auto-generated method stub
+				return null;
+			}
+
+			@Override
+			public void putAll(Map<? extends K, ? extends V> arg0) {
+				// TODO Auto-generated method stub
+
+			}
+
+			@Override
+			public int size() {
+				// TODO Auto-generated method stub
+				return 0;
+			}
+
+			@Override
+			public Collection<V> values() {
+				// TODO Auto-generated method stub
+				return null;
+			}
+
+		}
 
 		protected volatile AtomicInteger condition = new AtomicInteger();
 		protected Node<K, V> head = null;
 		protected AtomicInteger tableNodeSize = new AtomicInteger();
-		protected boolean transformed = false;
+		protected AtomicBoolean transformed = new AtomicBoolean();
+		protected SkipedListMap<K, V> skipedListMap = null;
 
 		protected Node<K, V> getHead() {
 			while (true) {
@@ -116,83 +343,105 @@ public class HashTable<K, V> implements Map<K, V> {
 		}
 
 		protected V get(K k) {
-			Node<K, V> nowNode = this.getHead();
-			while (nowNode != null) {
-				if (nowNode.pair.getKey().equals(k)) {
-					// System.out.println("get " + nowNode.pair.key + " " + k + " " +
-					// nowNode.pair.value);
-					return nowNode.pair.getValue();
+			if (!transformed.get()) {
+				Node<K, V> nowNode = this.getHead();
+				while (nowNode != null) {
+					if (nowNode.pair.getKey().equals(k)) {
+						return nowNode.pair.getValue();
+					}
+					nowNode = nowNode.nextNode;
 				}
-				nowNode = nowNode.nextNode;
+				return null;
+			} else {
+				V res = skipedListMap.get(k);
+				return res;
 			}
-			return null;
 		}
 
-		protected synchronized V insert(K k, V v) {
+		protected synchronized V put(K k, V v) {
 			V res = null;
 			this.workBegin();
-			Node<K, V> nowNode = this.head;
+			if (!transformed.get()) {
 
-			while (nowNode != null) {
-				if (nowNode.pair.getKey().equals(k)) {
-					res = nowNode.pair.getValue();
-					nowNode.pair.setValue(v);
-					this.workEnd();
-					return res;
+				Node<K, V> nowNode = this.head;
+
+				while (nowNode != null) {
+					if (nowNode.pair.getKey().equals(k)) {
+						res = nowNode.pair.getValue();
+						nowNode.pair.setValue(v);
+						this.workEnd();
+						return res;
+					}
+					nowNode = nowNode.nextNode;
 				}
-				nowNode = nowNode.nextNode;
+
+				this.head = new Node<K, V>(this.head, new HashTableEntry<K, V>(k, v));
+
+				tableNodeSize.getAndAdd(1);
+
+				if (!transformed.get() && Comparable.class.isAssignableFrom(k.getClass())
+						&& tableNodeSize.get() > TRANSFORM_LIMIT) {
+					this.transform();
+				}
+			} else {
+				res = skipedListMap.put(k, v);
 			}
+			this.workEnd();
+			return res;
 
-			this.head = new Node<K, V>(this.head, new HashTableEntry<K, V>(k, v));
-			nodeSize.getAndAdd(1);
-			tableNodeSize.getAndAdd(1);
+		}
 
-			if (tableNodeSize.get() > TRANSFORM_LIMIT) {
-				this.transform();
+		protected synchronized V remove(K k) {
+			V res = null;
+			this.workBegin();
+			if (!transformed.get()) {
+				Node<K, V> nowNode = this.head;
+				Node<K, V> oldNode = nowNode;
+
+				if (nowNode == null) {
+					this.workEnd();
+					return null;
+				}
+
+				while (nowNode != null) {
+					if (nowNode.pair.getKey().equals(k)) {
+						res = nowNode.pair.getValue();
+						Node<K, V> newNode = nowNode.nextNode;
+						while (oldNode != nowNode) {
+							newNode = new Node<K, V>(newNode, oldNode.pair);
+							oldNode = oldNode.nextNode;
+						}
+						this.head = newNode;
+						tableNodeSize.getAndAdd(-1);
+						this.workEnd();
+						return res;
+					}
+					nowNode = nowNode.nextNode;
+				}
+			} else {
+				res = skipedListMap.remove(k);
 			}
 			this.workEnd();
 			return res;
 		}
 
-		protected synchronized V delete(K k) {
+		protected synchronized void resizeSplit(int nowHashcode, Table<K, V>[] newPool, int newPoolSize) {
+			Table<K, V> bigger = new Table<K, V>();
+			Table<K, V> smaller = new Table<K, V>();
 			this.workBegin();
 
-			Node<K, V> nowNode = this.head;
-			Node<K, V> oldNode = nowNode;
-
-			if (nowNode == null) {
-				this.workEnd();
-				return null;
+			Node<K, V> nowNode;
+			if (!transformed.get()) {
+				nowNode = this.head;
+			} else {
+				nowNode = this.skipedListMap.heads[0];
 			}
 
 			while (nowNode != null) {
-				if (nowNode.pair.getKey().equals(k)) {
-					V lastValue = nowNode.pair.getValue();
-					Node<K, V> newNode = nowNode.nextNode;
-					while (oldNode != nowNode) {
-						newNode = new Node<K, V>(newNode, oldNode.pair);
-						oldNode = oldNode.nextNode;
-					}
-					this.head = newNode;
-					nodeSize.addAndGet(-1);
-					tableNodeSize.getAndAdd(-1);
-					this.workEnd();
-					return lastValue;
-				}
-				nowNode = nowNode.nextNode;
-			}
-			this.workEnd();
-			return null;
+				int hashCode = spread(nowNode.pair.getKey().hashCode());
+				hashCode &= (newPoolSize - 1);
 
-		}
-
-		protected synchronized void resizeSplit(int nowHashcode, HashTable<K, V>.Table[] newPool, int newPoolSize) {
-			Table bigger = new Table();
-			Table smaller = new Table();
-			this.workBegin();
-			Node<K, V> nowNode = this.head;
-			while (nowNode != null) {
-				if (getNewHashCode(nowNode.pair.getKey()) == nowHashcode) {
+				if (hashCode == nowHashcode) {
 					smaller.head = new Node<K, V>(smaller.head, nowNode.pair);
 					smaller.tableNodeSize.getAndAdd(1);
 				} else {
@@ -203,17 +452,22 @@ public class HashTable<K, V> implements Map<K, V> {
 			}
 			newPool[nowHashcode] = smaller;
 			newPool[nowHashcode + (newPoolSize >> 1)] = bigger;
+
 			this.workEnd();
 			return;
 		}
 
 		protected synchronized void transform() {
-
+			if (transformed.get())
+				return;
+			skipedListMap = new SkipedListMap<K, V>();
+			transformed.set(true);
+			this.head = null;
 		}
 
 	}
 
-	public Table[] pool;
+	public Table<K, V>[] pool;
 
 	volatile int nowPoolSize = 0;
 	AtomicInteger nodeSize = new AtomicInteger();
@@ -268,25 +522,19 @@ public class HashTable<K, V> implements Map<K, V> {
 
 		int nowHashCode = getHashCode(k);
 
-		Table nowTable = pool[nowHashCode];
+		// System.out.println(nowPoolSize + " " + nowHashCode + " " +
+		// pool[nowHashCode]);
 
+		Table<K, V> nowTable = pool[nowHashCode];
 		return nowTable.get(k);
 	}
 
-	protected V delete(K k) {
-		while (condition.get() != 0) {
-		}
-
-		int nowHashCode = getHashCode(k);
-		Table nowTable = pool[nowHashCode];
-		return nowTable.delete(k);
-	}
-
 	public synchronized void resize() {
-		if (nowPoolSize >= MAX_POOL_SIZE) {
+		if (condition.get() == 1) {
 			return;
 		}
-		if (condition.get() == 1) {
+
+		if (nowPoolSize >= MAX_POOL_SIZE) {
 			return;
 		}
 
@@ -296,9 +544,9 @@ public class HashTable<K, V> implements Map<K, V> {
 
 		condition.set(1);
 		int newPoolSize = (nowPoolSize << 1);
-		Table[] oldPool = pool;
+		Table<K, V>[] oldPool = pool;
 		@SuppressWarnings("unchecked")
-		Table[] newPool = new HashTable.Table[newPoolSize];
+		Table<K, V>[] newPool = new HashTable.Table[newPoolSize];
 
 		for (int i = 0; i < nowPoolSize; i++) {
 			oldPool[i].resizeSplit(i, newPool, newPoolSize);
@@ -321,6 +569,7 @@ public class HashTable<K, V> implements Map<K, V> {
 		return true;
 	}
 
+	@SuppressWarnings("unchecked")
 	@Override
 	public boolean containsValue(Object o) {
 		if (o == null) {
@@ -333,7 +582,7 @@ public class HashTable<K, V> implements Map<K, V> {
 			return false;
 		}
 
-		Table[] oldPool = pool;
+		Table<K, V>[] oldPool = pool;
 		for (int i = 0; i < nowPoolSize; i++) {
 			Node<K, V> nowNode = oldPool[i].getHead();
 
@@ -350,7 +599,7 @@ public class HashTable<K, V> implements Map<K, V> {
 	public Set<Entry<K, V>> entrySet() {
 		HashSet<Entry<K, V>> entrySet = new HashSet<Entry<K, V>>();
 
-		Table[] oldPool = pool;
+		Table<K, V>[] oldPool = pool;
 		for (int i = 0; i < nowPoolSize; i++) {
 			Node<K, V> nowNode = oldPool[i].getHead();
 
@@ -372,7 +621,7 @@ public class HashTable<K, V> implements Map<K, V> {
 	public Set<K> keySet() {
 		HashSet<K> keySet = new HashSet<K>();
 
-		Table[] oldPool = pool;
+		Table<K, V>[] oldPool = pool;
 		for (int i = 0; i < nowPoolSize; i++) {
 			Node<K, V> nowNode = oldPool[i].getHead();
 
@@ -391,8 +640,15 @@ public class HashTable<K, V> implements Map<K, V> {
 		}
 
 		int nowHashCode = getHashCode(k);
-		Table nowTable = pool[nowHashCode];
-		V res = nowTable.insert(k, v);
+
+		// System.out.println(nowPoolSize + " " + nowHashCode + " " +
+		// pool[nowHashCode]);
+
+		Table<K, V> nowTable = pool[nowHashCode];
+		V res = nowTable.put(k, v);
+
+		if (res != null)
+			nodeSize.getAndAdd(1);
 		if (nodeSize.get() >= nowPoolSize - (nowPoolSize >> 2)) {
 			resize();
 		}
@@ -422,7 +678,17 @@ public class HashTable<K, V> implements Map<K, V> {
 		if (!containsKey(o)) {
 			return null;
 		}
-		return delete(k);
+
+		while (condition.get() != 0) {
+		}
+
+		int nowHashCode = getHashCode(k);
+		Table<K, V> nowTable = pool[nowHashCode];
+		V res = nowTable.remove(k);
+		if (res != null) {
+			nodeSize.addAndGet(-1);
+		}
+		return res;
 	}
 
 	@Override
@@ -434,7 +700,7 @@ public class HashTable<K, V> implements Map<K, V> {
 	public Collection<V> values() {
 		ArrayList<V> values = new ArrayList<V>();
 
-		Table[] oldPool = pool;
+		Table<K, V>[] oldPool = pool;
 		for (int i = 0; i < nowPoolSize; i++) {
 			Node<K, V> nowNode = oldPool[i].getHead();
 
