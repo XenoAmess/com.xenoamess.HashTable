@@ -162,6 +162,7 @@ public class HashTableTest {
 	}
 
 	static void findSuspiciousError() {
+		println("Size : " + testedHashTable.size());
 		println("nowPoolSize : " + testedHashTable.getNowPoolSize());
 		ConcurrentHashMap<Integer, Integer> judger = new ConcurrentHashMap<Integer, Integer>();
 		int i = 4;
