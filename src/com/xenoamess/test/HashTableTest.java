@@ -11,9 +11,9 @@ import java.util.concurrent.ConcurrentLinkedDeque;
 import com.xenoamess.HashTable;
 
 public class HashTableTest {
-	public static int TEST_TURNS = (1 << 14);
+	public static int TEST_TURNS = (1 << 16);
 	public static int TEST_THREADS = 12;
-	public static int TEST_MAX = TEST_TURNS;
+	public static int TEST_MAX = (1 << 16);
 	public static final String tester = "XenoAmess";
 	public static HashTable<Integer, Integer> testedHashTable;
 
