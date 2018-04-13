@@ -9,33 +9,56 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class HashTable<K, V> implements Map<K, V> {
-	static final int HASH_BITS = 0x7fffffff; // usable bits of normal node hash
+
+	/**
+	 * usable bits of normal node hash
+	 */
+	static final int HASH_BITS = 0x7fffffff;
+
+	/**
+	 * maximum poolSize of the map. the map can resize only if it's nodeSize is less
+	 * than MAX_POOL_SIZE
+	 */
 	static final int MAX_POOL_SIZE = (1 << 16);
+
+	/**
+	 * minimum poolSize of the map. A map's nodeSize cannot be lower to
+	 * MIN_POOL_SIZE
+	 */
 	static final int MIN_POOL_SIZE = (1 << 8);
+
+	/**
+	 * transform limit of the table.A table is initially a linked-list.when a
+	 * table's tableNodeSize increace to TRANSFORM_LIMIT (and the key class of the
+	 * map is a Comparable) then it would tranform to a skip-list
+	 */
 	static final int TRANSFORM_LIMIT = 8;
 
-	int getHashCode(Object k) {
-		int hashCode = spread(k.hashCode());
-		return hashCode & (nowPoolSize - 1);
+	/**
+	 * the method to get an object's hashcode.for more details please lookat
+	 * 
+	 * @param k
+	 *            the object we want to get hashcode
+	 * @return k's hashcode in the map
+	 * 
+	 */
+	final int getHashCode(Object k) {
+		return spread(k.hashCode()) & nowPoolSize_1;
 	}
 
 	/**
-	 * Spreads (XORs) higher bits of hash to lower and also forces top bit to 0.
-	 * Because the table uses power-of-two masking, sets of hashes that vary only in
-	 * bits above the current mask will always collide. (Among known examples are
-	 * sets of Float keys holding consecutive whole numbers in small tables.) So we
-	 * apply a transform that spreads the impact of higher bits downward. There is a
-	 * tradeoff between speed, utility, and quality of bit-spreading. Because many
-	 * common sets of hashes are already reasonably distributed (so don't benefit
-	 * from spreading), and because we use trees to handle large sets of collisions
-	 * in bins, we just XOR some shifted bits in the cheapest possible way to reduce
-	 * systematic lossage, as well as to incorporate impact of the highest bits that
-	 * would otherwise never be used in index calculations because of table bounds.
+	 * notice:the method spread is modified from
+	 * java.util.concurrent.ConcurrentMap.spread(int h)
+	 * 
+	 * @see java.util.concurrent.ConcurrentMap.spread
 	 */
 	static final int spread(int h) {
-		return (h ^ (h >>> 16)) & HASH_BITS;
+		return (h ^ (h >>> 16));
 	}
 
+	/*
+	 * Entry of the hashtable.
+	 */
 	static class HashTableEntry<K, V> implements Entry<K, V>, Comparable<HashTableEntry<K, V>> {
 		protected final K key;
 		protected volatile V value;
@@ -70,6 +93,9 @@ public class HashTable<K, V> implements Map<K, V> {
 
 	}
 
+	/*
+	 * Node of Table.(list form,before transform)
+	 */
 	static class Node<K, V> {
 		protected final Node<K, V> nextNode;
 		protected final Entry<K, V> pair;
@@ -80,6 +106,10 @@ public class HashTable<K, V> implements Map<K, V> {
 		}
 	}
 
+	/**
+	 * Table is a basic Container of the HashTable. Initially it is a list,and when
+	 * its nodeSize reach TRANSFORM_LIMIT,it would transform to a skiplist.
+	 */
 	static class Table<K, V> {
 
 		static class SkipedListNode<K, V> extends Node<K, V> {
@@ -93,13 +123,24 @@ public class HashTable<K, V> implements Map<K, V> {
 			}
 		}
 
+		/**
+		 * the inner skiplist of Table
+		 */
 		@SuppressWarnings("hiding")
 		class SkipedListMap<K, V> implements Map<K, V> {
-
+			/**
+			 * the height of the skip-list
+			 */
 			AtomicInteger layer = new AtomicInteger(0);
 
+			/**
+			 * the head node of each layer
+			 */
 			SkipedListNode<K, V> heads[];
 
+			/**
+			 * @return wait untill table.condition=0 then return heads
+			 */
 			protected SkipedListNode<K, V>[] getHeads() {
 				while (true) {
 					if (condition.get() == 0) {
@@ -131,7 +172,7 @@ public class HashTable<K, V> implements Map<K, V> {
 				SkipedListNode<K, V>[] lastHeads = new SkipedListNode[pairs.size()];
 
 				for (int i = 0; i < layer.get(); i++) {
-					for (int j = (pairs.size() - 1) >> i; j >= 0; j--) {
+					for (int j = (pairs.size() - 1) >>> i; j >= 0; j--) {
 						heads[i] = new SkipedListNode<K, V>(heads[i], lastHeads[j << i], pairs.get(j << i));
 						lastHeads[j << i] = heads[i];
 					}
@@ -180,6 +221,16 @@ public class HashTable<K, V> implements Map<K, V> {
 				return null;
 			}
 
+			/**
+			 * when put, if it cannot find k node,then find the place to insert it and
+			 * rebuild the first half of the skiplist.if it find the k node,then it simply
+			 * change it's value and exit. it would change the value of some get method
+			 * before the put,but the get can still run normally. if you want it stricty be
+			 * right,then if find the node,we need to rebuild the skpilist too. when
+			 * rebuild,delete all the nodes whose value is null.
+			 * 
+			 * @see java.util.Map#put(java.lang.Object, java.lang.Object)
+			 */
 			@SuppressWarnings("unchecked")
 			@Override
 			public V put(K k, V v) {
@@ -254,7 +305,7 @@ public class HashTable<K, V> implements Map<K, V> {
 							SkipedListNode<K, V>[] lastHeads = new SkipedListNode[pairs.size()];
 
 							for (int i = 0; i < newLayer; i++) {
-								for (int j = (pairs.size() - 1) >> i; j >= 0; j--) {
+								for (int j = (pairs.size() - 1) >>> i; j >= 0; j--) {
 									newHeads[i] = new SkipedListNode<K, V>(newHeads[i], lastHeads[j << i],
 											pairs.get(j << i));
 									lastHeads[j << i] = newHeads[i];
@@ -286,6 +337,12 @@ public class HashTable<K, V> implements Map<K, V> {
 				return res;
 			}
 
+			/**
+			 * try to set the node o's value to null do not actually delete it ,but only set
+			 * its value to null. it will actually deleted when rebuild in get.
+			 * 
+			 * @see java.util.Map#remove(java.lang.Object)
+			 */
 			@SuppressWarnings({ "unchecked" })
 			@Override
 			public V remove(Object o) {
@@ -342,12 +399,37 @@ public class HashTable<K, V> implements Map<K, V> {
 
 		}
 
+		/**
+		 * condition means if the Table is being modifid now. since then,only when
+		 * condition=0,methods would run. and method that would modify the table shall
+		 * make condition 1 before modifying,and make condition 0 after modifying
+		 */
 		protected volatile AtomicInteger condition = new AtomicInteger();
+
+		/**
+		 * if the table has not transformed then it is the list's head. otherwise head
+		 * is null.
+		 */
 		protected Node<K, V> head = null;
+
+		/**
+		 * number of nodes in the table.
+		 */
 		protected AtomicInteger tableNodeSize = new AtomicInteger();
+
+		/**
+		 * if the table has transformed.
+		 */
 		protected AtomicBoolean transformed = new AtomicBoolean();
+
+		/**
+		 * if the table has transformed then it is the skiplist otherwise it's null;
+		 */
 		protected SkipedListMap<K, V> skipedListMap = null;
 
+		/**
+		 * @return return a Node who is the head of the list,wether it is transformed.
+		 */
 		protected Node<K, V> getHead() {
 			if (transformed.get() && skipedListMap != null) {
 				while (true) {
@@ -485,7 +567,7 @@ public class HashTable<K, V> implements Map<K, V> {
 				nowNode = nowNode.nextNode;
 			}
 			newPool[nowHashcode] = smaller;
-			newPool[nowHashcode + (newPoolSize >> 1)] = bigger;
+			newPool[nowHashcode + (newPoolSize >>> 1)] = bigger;
 
 			this.workEnd();
 			return;
@@ -504,6 +586,7 @@ public class HashTable<K, V> implements Map<K, V> {
 	public Table<K, V>[] pool;
 
 	volatile int nowPoolSize = 0;
+	volatile int nowPoolSize_1 = 0;
 	AtomicInteger nodeSize = new AtomicInteger();
 	AtomicInteger condition = new AtomicInteger();
 
@@ -534,6 +617,7 @@ public class HashTable<K, V> implements Map<K, V> {
 		while (this.nowPoolSize < initPoolSize) {
 			this.nowPoolSize = this.nowPoolSize << 1;
 		}
+		this.nowPoolSize_1 = this.nowPoolSize - 1;
 		this.pool = new HashTable.Table[this.nowPoolSize];
 		this.nodeSize.set(0);
 		for (int i = 0; i < this.nowPoolSize; i++) {
@@ -578,7 +662,7 @@ public class HashTable<K, V> implements Map<K, V> {
 
 		if (res == null)
 			nodeSize.getAndIncrement();
-		if (nodeSize.get() >= nowPoolSize - (nowPoolSize >> 2)) {
+		if (nodeSize.get() >= nowPoolSize - (nowPoolSize >>> 2)) {
 			resize();
 		}
 		return res;
@@ -618,6 +702,9 @@ public class HashTable<K, V> implements Map<K, V> {
 		return nodeSize.get();
 	}
 
+	/**
+	 * resize means enlarge the HashTable's size to two times
+	 */
 	public synchronized void resize() {
 		if (condition.get() == 1) {
 			return;
@@ -627,7 +714,7 @@ public class HashTable<K, V> implements Map<K, V> {
 			return;
 		}
 
-		if (!(nodeSize.get() >= nowPoolSize - (nowPoolSize >> 2))) {
+		if (!(nodeSize.get() >= nowPoolSize - (nowPoolSize >>> 2))) {
 			return;
 		}
 
@@ -642,6 +729,7 @@ public class HashTable<K, V> implements Map<K, V> {
 		}
 		pool = newPool;
 		nowPoolSize = newPoolSize;
+		nowPoolSize_1 = nowPoolSize - 1;
 		condition.set(0);
 	}
 
