@@ -1,1 +1,2 @@
-# AlibabaTest_XuJin
+# com.xenoamess.HashTable
+A concurrent HashTable.
